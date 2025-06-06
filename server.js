@@ -1,85 +1,76 @@
 const express = require('express');
 const { google } = require('googleapis');
+const dotenv = require('dotenv');
 const bodyParser = require('body-parser');
-require('dotenv').config(); // 🔧 Loads your .env config file
+
+dotenv.config();
 const app = express();
+const PORT = process.env.PORT || 3000;
 
 app.use(bodyParser.json());
 
-// 🔐 Google API Setup
-const SCOPES = ['https://www.googleapis.com/auth/spreadsheets'];
-const auth = new google.auth.GoogleAuth({
-  credentials: {
-    client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL, // 🔧 Add this to your .env file
-    private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n') // 🔧 Escaped correctly
-  },
-  scopes: SCOPES
-});
+// 🧪 POST /
+app.post('/', async (req, res) => {
+  const auth = new google.auth.JWT(
+    process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+    null,
+    process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+    ['https://www.googleapis.com/auth/spreadsheets']
+  );
 
+  const sheets = google.sheets({ version: 'v4', auth });
+  const sheetId = process.env.GOOGLE_SHEET_ID;
+  const sheetName = 'automated leads'; // 🔧 Update if yours differs
 
-// 🔧 Your Google Sheet Info
-const SHEET_ID = process.env.GOOGLE_SHEET_ID; // 🔧 Add this to .env
-const SHEET_NAME = 'automated leads';         // 🔧 Update if your sheet name is different
+  const incomingData = req.body;
 
-// Column order in your Google Sheet (should match exactly)
-const HEADERS = [
-  '', 'vmid', 'phone', 'query', 'banner', 'domain', 'country', 'founded',
-  'tagLine', 'fullName', 'headline', 'industry', 'jobTitle', 'lastName',
-  'location', 'firstName', 'timestamp', 'companyUrl', 'linkedinID',
-  'pageNumber', 'profileUrl', 'schoolName', 'sluggedUrl', 'companyName',
-  'companySize', 'linkedInUrl', 'specialties', 'headquarters',
-  'industryCode', 'mainCompanyID', 'companyAddress', 'companyWebsite',
-  'followersCount', 'companyLocation', 'connectionDegree', 'connectionsCount',
-  'profilePictureUrl', 'companyDescription', 'salesNavigatorLink',
-  'employeesOnLinkedIn', 'linkedinSalesNavigatorUrl', 'websiteFound',
-  'mailFromDropContact'
-];
-
-// Main POST Endpoint
-app.post('/append-if-unique', async (req, res) => {
   try {
-    const sheetData = req.body;
-
-    // Authorize with Google Sheets
-    const client = await auth.getClient();
-    const sheets = google.sheets({ version: 'v4', auth: client });
-
-    // 🔎 Get all current LinkedIn URLs in column Z
-    const { data } = await sheets.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: `'${SHEET_NAME}'!Z2:Z`, // Z = linkedInUrl column, skip header
+    // Step 1: Get all current rows
+    const readRes = await sheets.spreadsheets.values.get({
+      spreadsheetId: sheetId,
+      range: `${sheetName}!A2:Z`, // Skip header
     });
 
-    const existingUrls = new Set((data.values || []).map(row => row[0]));
+    const existingRows = readRes.data.values || [];
+    const headersRes = await sheets.spreadsheets.values.get({
+      spreadsheetId: sheetId,
+      range: `${sheetName}!A1:1`,
+    });
+    const headers = headersRes.data.values[0];
 
-    // Check if incoming linkedInUrl already exists
-    if (existingUrls.has(sheetData.linkedInUrl)) {
-      return res.status(200).json({ message: 'Duplicate LinkedIn URL. Not added.' });
+    const incomingLinkedInUrl = incomingData['linkedInUrl'];
+
+    const alreadyExists = existingRows.some(row => {
+      const index = headers.indexOf('linkedInUrl');
+      return row[index] === incomingLinkedInUrl;
+    });
+
+    if (alreadyExists) {
+      return res.status(200).json({ status: 'duplicate', message: 'User already exists' });
     }
 
-    // 🧩 Build row using the same order as spreadsheet columns
-    const row = HEADERS.map(key => sheetData[key] || '');
+    // Step 2: Map incomingData to headers
+    const rowToAdd = headers.map(header => incomingData[header] || '');
 
-    // Append new row
+    // Step 3: Append new row
     await sheets.spreadsheets.values.append({
-      spreadsheetId: SHEET_ID,
-      range: `'${SHEET_NAME}'!A1`,
+      spreadsheetId: sheetId,
+      range: `${sheetName}!A1`,
       valueInputOption: 'RAW',
-      requestBody: {
-        values: [row]
-      }
+      insertDataOption: 'INSERT_ROWS',
+      resource: {
+        values: [rowToAdd],
+      },
     });
 
-    res.status(200).json({ message: 'Row added successfully.' });
+    res.status(200).json({ status: 'added', message: 'Row added successfully' });
 
   } catch (err) {
-    console.error('Error appending row:', err);
-    res.status(500).json({ error: 'Internal Server Error' });
+    console.error('Error:', err);
+    res.status(500).json({ error: 'Internal Server Error', details: err.message });
   }
 });
 
-// 🔧 Start the Express server
-const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`✅ Server running on port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
