@@ -3,11 +3,21 @@ require('dotenv').config();
 
 const express = require('express');
 const { google } = require('googleapis');
+const Bottleneck = require('bottleneck');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware to parse JSON
 app.use(express.json());
+
+// Bottleneck limiter setup
+const limiter = new Bottleneck({
+  minTime: 1000, // Minimum 1s between each Google API call
+  maxConcurrent: 1,
+  reservoir: 60, // Max 60 requests per minute
+  reservoirRefreshAmount: 60,
+  reservoirRefreshInterval: 60 * 1000, // Refresh every 60 seconds
+});
 
 async function authorize() {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
@@ -16,7 +26,7 @@ async function authorize() {
   const formattedKey = rawKey?.replace(/\\n/g, '\n');
 
   console.log('Formatted GOOGLE_PRIVATE_KEY preview:');
-  console.log(formattedKey.split('\n').slice(0, 5).join('\n')); // show first 5 lines
+  console.log(formattedKey.split('\n').slice(0, 5).join('\n'));
   console.log('Raw Key (first 100 chars):', rawKey?.substring(0, 100));
 
   if (!email) {
@@ -38,7 +48,7 @@ async function authorize() {
   const auth = new google.auth.GoogleAuth({
     credentials: {
       client_email: email,
-      private_key: rawKey.replace(/\\n/g, '\n') // Correct newline formatting
+      private_key: rawKey.replace(/\\n/g, '\n')
     },
     scopes: [
       'https://www.googleapis.com/auth/spreadsheets',
@@ -49,10 +59,6 @@ async function authorize() {
   return await auth.getClient();
 }
 
-/**
- * Endpoint to add a new lead to Google Sheets
- * Accepts LinkedIn profile data and appends it to the Google Sheet
- */
 app.post('/', async (req, res) => {
   try {
     const HEADERS = [
@@ -92,10 +98,12 @@ app.post('/', async (req, res) => {
     const columnLetter = String.fromCharCode(65 + linkedInUrlIndex);
     console.log(`Looking for linkedInUrl in column ${columnLetter} (index ${linkedInUrlIndex})`);
 
-    const sheetsResponse = await sheets.spreadsheets.get({
-      spreadsheetId,
-      fields: 'sheets.properties'
-    });
+    const sheetsResponse = await limiter.schedule(() =>
+      sheets.spreadsheets.get({
+        spreadsheetId,
+        fields: 'sheets.properties'
+      })
+    );
 
     console.log('Available sheets:');
     sheetsResponse.data.sheets.forEach(sheet => {
@@ -105,10 +113,12 @@ app.post('/', async (req, res) => {
     const sheetName = 'automated leads';
     console.log(`Using sheet name: "${sheetName}"`);
 
-    const { data } = await sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: `${sheetName}!${columnLetter}2:${columnLetter}`,
-    });
+    const { data } = await limiter.schedule(() =>
+      sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `${sheetName}!${columnLetter}2:${columnLetter}`,
+      })
+    );
 
     console.log('Raw spreadsheet data response:');
     console.log(JSON.stringify(data, null, 2));
@@ -159,14 +169,16 @@ app.post('/', async (req, res) => {
 
     console.log(`Appending data to range: ${range}`);
 
-    await sheets.spreadsheets.values.append({
-      spreadsheetId,
-      range,
-      valueInputOption: 'RAW',
-      requestBody: {
-        values: [row]
-      },
-    });
+    await limiter.schedule(() =>
+      sheets.spreadsheets.values.append({
+        spreadsheetId,
+        range,
+        valueInputOption: 'RAW',
+        requestBody: {
+          values: [row]
+        },
+      })
+    );
 
     res.status(200).send({ 
       success: true,
@@ -181,39 +193,6 @@ app.post('/', async (req, res) => {
   }
 });
 
-// ========= NEW SANITIZE ENDPOINT ADDED BELOW (no changes above) =========
-
-const bodyParser = require('body-parser');
-
-// Accept raw plain text (no JSON required)
-app.use('/sanitize', bodyParser.text({ type: '*/*', limit: '10mb' }));
-
-// Escape a plain string to be a valid JSON-safe value (no wrapping in extra quotes)
-const escapeForJsonStringValue = (str) => {
-  return str
-    .replace(/\\/g, '\\\\')
-    .replace(/"/g, '\\"')
-    .replace(/\r/g, '\\r')
-    .replace(/\n/g, '\\n');
-};
-
-app.post('/sanitize', (req, res) => {
-  try {
-    const rawString = req.body;
-
-    // Handle null, undefined, or empty
-    if (rawString === null || rawString === undefined || !String(rawString).trim()) {
-      return res.status(200).json({ escaped: "" });
-    }
-
-    const escaped = escapeForJsonStringValue(rawString);
-    return res.status(200).json({ escaped });
-  } catch (err) {
-    console.error('Error in /sanitize:', err);
-    return res.status(500).json({ error: 'Internal Server Error', details: err.message });
-  }
-});
-
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`🚀 Server listening on port ${PORT}`);
 });

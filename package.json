@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "bottleneck": "^2.19.5",
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
     "googleapis": "^150.0.1"
