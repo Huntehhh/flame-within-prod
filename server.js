@@ -188,22 +188,20 @@ const bodyParser = require('body-parser');
 // Accept raw plain text (no JSON required)
 app.use('/sanitize', bodyParser.text({ type: '*/*', limit: '10mb' }));
 
-// Escape a plain string to be a valid JSON value
+// Escape a plain string to be a valid JSON-safe value (no wrapping in extra quotes)
 const escapeForJsonStringValue = (str) => {
-  return (
-    '"' + str
-      .replace(/\\/g, '\\\\')
-      .replace(/"/g, '\\"')
-      .replace(/\r/g, '\\r')
-      .replace(/\n/g, '\\n') + '"'
-  );
+  return str
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\r/g, '\\r')
+    .replace(/\n/g, '\\n');
 };
 
 app.post('/sanitize', (req, res) => {
   try {
     const rawString = req.body;
 
-    // 🆕 Handle null, undefined, or empty
+    // Handle null, undefined, or empty
     if (rawString === null || rawString === undefined || !String(rawString).trim()) {
       return res.status(200).json({ escaped: "" });
     }
