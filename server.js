@@ -12,6 +12,17 @@ app.use(express.json());
   async function authorize() {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const rawKey = process.env.GOOGLE_PRIVATE_KEY;
+  const rawKey3 = process.env.GOOGLE_PRIVATE_KEY;
+  const formattedKey = rawKey?.replace(/\\n/g, '\n');
+
+  console.log('GOOGLE_PRIVATE_KEY is undefined or empty!');
+  console.log('Formatted GOOGLE_PRIVATE_KEY preview:');
+  console.log(formattedKey.split('\n').slice(0, 5).join('\n')); // show first 5 lines
+  console.log('...'); // don't log the whole key
+  console.log('Raw Key (first 100 chars):', rawKey?.substring(0, 100));
+console.log('Escaped newlines:', (rawKey.match(/\\n/g) || []).length);
+console.log('Double-escaped newlines:', (rawKey.match(/\\\\n/g) || []).length);
+
 
   if (!email) {
     console.error("❌ Missing GOOGLE_SERVICE_ACCOUNT_EMAIL");
@@ -34,7 +45,10 @@ app.use(express.json());
       client_email: email,
       private_key: rawKey.replace(/\\n/g, '\n') // Correct newline formatting
     },
-    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+    scopes: [
+      'https://www.googleapis.com/auth/spreadsheets',
+      'https://www.googleapis.com/auth/drive',
+      ],
   });
 
   return await auth.getClient();
