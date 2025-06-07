@@ -15,13 +15,9 @@ app.use(express.json());
   const rawKey3 = process.env.GOOGLE_PRIVATE_KEY;
   const formattedKey = rawKey?.replace(/\\n/g, '\n');
 
-  console.log('GOOGLE_PRIVATE_KEY is undefined or empty!');
   console.log('Formatted GOOGLE_PRIVATE_KEY preview:');
   console.log(formattedKey.split('\n').slice(0, 5).join('\n')); // show first 5 lines
-  console.log('...'); // don't log the whole key
   console.log('Raw Key (first 100 chars):', rawKey?.substring(0, 100));
-console.log('Escaped newlines:', (rawKey.match(/\\n/g) || []).length);
-console.log('Double-escaped newlines:', (rawKey.match(/\\\\n/g) || []).length);
 
 
   if (!email) {
@@ -91,6 +87,83 @@ app.post('/', async (req, res) => {
       throw new Error("Missing GOOGLE_SHEET_ID environment variable");
     }
     
+    // Find the index of linkedInUrl in HEADERS
+    const linkedInUrlIndex = HEADERS.indexOf('linkedInUrl');
+    if (linkedInUrlIndex === -1) {
+      console.error("linkedInUrl field not found in HEADERS");
+      throw new Error("Configuration error: linkedInUrl field not found in headers");
+    }
+    
+    // Convert 0-based index to A1 notation column (A=0, B=1, etc.)
+    const columnLetter = String.fromCharCode(65 + linkedInUrlIndex); // 65 is ASCII for 'A'
+    console.log(`Looking for linkedInUrl in column ${columnLetter} (index ${linkedInUrlIndex})`);
+    
+    // First, get all sheet names to verify we're using the correct one
+    const sheetsResponse = await sheets.spreadsheets.get({
+      spreadsheetId,
+      fields: 'sheets.properties'
+    });
+    
+    console.log('Available sheets:');
+    sheetsResponse.data.sheets.forEach(sheet => {
+      console.log(`- ${sheet.properties.title}`);
+    });
+    
+    // Use a variable for the sheet name to make it easier to adjust if needed
+    const sheetName = 'automated leads';
+    console.log(`Using sheet name: "${sheetName}"`);
+    
+    // Retrieve existing LinkedIn URLs to check for duplicates
+    const { data } = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!${columnLetter}2:${columnLetter}`, // Dynamic column reference
+    });
+    
+    // Debug the raw response
+    console.log('Raw spreadsheet data response:');
+    console.log(JSON.stringify(data, null, 2));
+    
+    // Debug information
+    console.log(`Incoming linkedInUrl: "${req.body.linkedInUrl}"`);
+    console.log(`Found ${data.values ? data.values.length : 0} existing entries`);
+    
+    // Create a Set of existing URLs for efficient lookup
+    const existingUrls = new Set();
+    if (data.values && data.values.length > 0) {
+      data.values.forEach(row => {
+        if (row[0]) {
+          // Normalize URL for comparison (trim whitespace, convert to lowercase)
+          const normalizedUrl = row[0].trim().toLowerCase();
+          existingUrls.add(normalizedUrl);
+          // Log a few entries for debugging
+          if (existingUrls.size < 5) {
+            console.log(`Existing URL: "${normalizedUrl}" (original: "${row[0]}")`);
+          }
+        }
+      });
+    }
+    
+    // Normalize the incoming URL the same way
+    const normalizedIncomingUrl = req.body.linkedInUrl ? req.body.linkedInUrl.trim().toLowerCase() : '';
+    console.log(`Normalized incoming URL: "${normalizedIncomingUrl}"`);
+    console.log(`URL exists in set: ${existingUrls.has(normalizedIncomingUrl)}`);
+    
+    // Debug: Print all URLs in the set
+    console.log("All existing URLs in set:");
+    existingUrls.forEach(url => console.log(`- "${url}"`));
+    
+    // Check if incoming linkedInUrl already exists
+    if (normalizedIncomingUrl && existingUrls.has(normalizedIncomingUrl)) {
+      console.log(`Duplicate found: "${normalizedIncomingUrl}"`);
+      return res.status(200).json({ 
+        success: false, 
+        message: 'Duplicate LinkedIn URL. Entry not added.' 
+      });
+    }
+    
+    console.log(`No duplicate found, proceeding to add: "${req.body.linkedInUrl}"`);
+    
+
     // Build row using the same order as spreadsheet columns
     const row = HEADERS.map(key => req.body[key] || '');
     
@@ -102,7 +175,10 @@ app.post('/', async (req, res) => {
       }
     }
     
-    const range = 'automated leads!A2:Z';
+    // Use the same sheet name variable for consistency
+    const range = `${sheetName}!A2:Z`;
+    
+    console.log(`Appending data to range: ${range}`);
     
     await sheets.spreadsheets.values.append({
       spreadsheetId,
