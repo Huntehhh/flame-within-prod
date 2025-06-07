@@ -203,8 +203,9 @@ app.post('/sanitize', (req, res) => {
   try {
     const rawString = req.body;
 
-    if (typeof rawString !== 'string' || !rawString.trim()) {
-      return res.status(400).json({ error: 'Expected non-empty string in body' });
+    // 🆕 Handle null, undefined, or empty
+    if (rawString === null || rawString === undefined || !String(rawString).trim()) {
+      return res.status(200).json({ escaped: "" });
     }
 
     const escaped = escapeForJsonStringValue(rawString);
