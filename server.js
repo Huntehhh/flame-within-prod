@@ -9,7 +9,7 @@ const PORT = process.env.PORT || 3000;
 // Middleware to parse JSON
 app.use(express.json());
 
-  async function authorize() {
+async function authorize() {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const rawKey = process.env.GOOGLE_PRIVATE_KEY;
   const rawKey3 = process.env.GOOGLE_PRIVATE_KEY;
@@ -18,7 +18,6 @@ app.use(express.json());
   console.log('Formatted GOOGLE_PRIVATE_KEY preview:');
   console.log(formattedKey.split('\n').slice(0, 5).join('\n')); // show first 5 lines
   console.log('Raw Key (first 100 chars):', rawKey?.substring(0, 100));
-
 
   if (!email) {
     console.error("❌ Missing GOOGLE_SERVICE_ACCOUNT_EMAIL");
@@ -44,12 +43,11 @@ app.use(express.json());
     scopes: [
       'https://www.googleapis.com/auth/spreadsheets',
       'https://www.googleapis.com/auth/drive',
-      ],
+    ],
   });
 
   return await auth.getClient();
 }
-
 
 /**
  * Endpoint to add a new lead to Google Sheets
@@ -57,7 +55,6 @@ app.use(express.json());
  */
 app.post('/', async (req, res) => {
   try {
-    // Define the expected columns in the Google Sheet
     const HEADERS = [
       '', 'vmid', 'phone', 'query', 'banner', 'domain', 'country', 'founded',
       'tagLine', 'fullName', 'headline', 'industry', 'jobTitle', 'lastName',
@@ -70,15 +67,14 @@ app.post('/', async (req, res) => {
       'employeesOnLinkedIn', 'linkedinSalesNavigatorUrl', 'websiteFound',
       'mailFromDropContact', 'status', 'anyMailEmail', 'icebreakerJson'
     ];
-    
-    // Validate that we have at least some data to work with
+
     if (Object.keys(req.body).length === 0) {
       return res.status(400).send({ 
         error: 'Bad Request', 
         details: 'Request body cannot be empty' 
       });
     }
-    
+
     const authClient = await authorize();
     const sheets = google.sheets({ version: 'v4', auth: authClient });
 
@@ -86,73 +82,60 @@ app.post('/', async (req, res) => {
     if (!spreadsheetId) {
       throw new Error("Missing GOOGLE_SHEET_ID environment variable");
     }
-    
-    // Find the index of linkedInUrl in HEADERS
+
     const linkedInUrlIndex = HEADERS.indexOf('linkedInUrl');
     if (linkedInUrlIndex === -1) {
       console.error("linkedInUrl field not found in HEADERS");
       throw new Error("Configuration error: linkedInUrl field not found in headers");
     }
-    
-    // Convert 0-based index to A1 notation column (A=0, B=1, etc.)
-    const columnLetter = String.fromCharCode(65 + linkedInUrlIndex); // 65 is ASCII for 'A'
+
+    const columnLetter = String.fromCharCode(65 + linkedInUrlIndex);
     console.log(`Looking for linkedInUrl in column ${columnLetter} (index ${linkedInUrlIndex})`);
-    
-    // First, get all sheet names to verify we're using the correct one
+
     const sheetsResponse = await sheets.spreadsheets.get({
       spreadsheetId,
       fields: 'sheets.properties'
     });
-    
+
     console.log('Available sheets:');
     sheetsResponse.data.sheets.forEach(sheet => {
       console.log(`- ${sheet.properties.title}`);
     });
-    
-    // Use a variable for the sheet name to make it easier to adjust if needed
+
     const sheetName = 'automated leads';
     console.log(`Using sheet name: "${sheetName}"`);
-    
-    // Retrieve existing LinkedIn URLs to check for duplicates
+
     const { data } = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `${sheetName}!${columnLetter}2:${columnLetter}`, // Dynamic column reference
+      range: `${sheetName}!${columnLetter}2:${columnLetter}`,
     });
-    
-    // Debug the raw response
+
     console.log('Raw spreadsheet data response:');
     console.log(JSON.stringify(data, null, 2));
-    
-    // Debug information
+
     console.log(`Incoming linkedInUrl: "${req.body.linkedInUrl}"`);
     console.log(`Found ${data.values ? data.values.length : 0} existing entries`);
-    
-    // Create a Set of existing URLs for efficient lookup
+
     const existingUrls = new Set();
     if (data.values && data.values.length > 0) {
       data.values.forEach(row => {
         if (row[0]) {
-          // Normalize URL for comparison (trim whitespace, convert to lowercase)
           const normalizedUrl = row[0].trim().toLowerCase();
           existingUrls.add(normalizedUrl);
-          // Log a few entries for debugging
           if (existingUrls.size < 5) {
             console.log(`Existing URL: "${normalizedUrl}" (original: "${row[0]}")`);
           }
         }
       });
     }
-    
-    // Normalize the incoming URL the same way
+
     const normalizedIncomingUrl = req.body.linkedInUrl ? req.body.linkedInUrl.trim().toLowerCase() : '';
     console.log(`Normalized incoming URL: "${normalizedIncomingUrl}"`);
     console.log(`URL exists in set: ${existingUrls.has(normalizedIncomingUrl)}`);
-    
-    // Debug: Print all URLs in the set
+
     console.log("All existing URLs in set:");
     existingUrls.forEach(url => console.log(`- "${url}"`));
-    
-    // Check if incoming linkedInUrl already exists
+
     if (normalizedIncomingUrl && existingUrls.has(normalizedIncomingUrl)) {
       console.log(`Duplicate found: "${normalizedIncomingUrl}"`);
       return res.status(200).json({ 
@@ -160,26 +143,22 @@ app.post('/', async (req, res) => {
         message: 'Duplicate LinkedIn URL. Entry not added.' 
       });
     }
-    
-    console.log(`No duplicate found, proceeding to add: "${req.body.linkedInUrl}"`);
-    
 
-    // Build row using the same order as spreadsheet columns
+    console.log(`No duplicate found, proceeding to add: "${req.body.linkedInUrl}"`);
+
     const row = HEADERS.map(key => req.body[key] || '');
-    
-    // Add timestamp if not provided
+
     if (!req.body.timestamp) {
       const timestampIndex = HEADERS.indexOf('timestamp');
       if (timestampIndex !== -1) {
         row[timestampIndex] = new Date().toISOString();
       }
     }
-    
-    // Use the same sheet name variable for consistency
+
     const range = `${sheetName}!A2:Z`;
-    
+
     console.log(`Appending data to range: ${range}`);
-    
+
     await sheets.spreadsheets.values.append({
       spreadsheetId,
       range,
@@ -199,6 +178,40 @@ app.post('/', async (req, res) => {
       error: 'Internal Server Error', 
       details: err.message 
     });
+  }
+});
+
+// ========= NEW SANITIZE ENDPOINT ADDED BELOW (no changes above) =========
+
+const bodyParser = require('body-parser');
+
+// Accept raw plain text (no JSON required)
+app.use('/sanitize', bodyParser.text({ type: '*/*', limit: '10mb' }));
+
+// Escape a plain string to be a valid JSON value
+const escapeForJsonStringValue = (str) => {
+  return (
+    '"' + str
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"')
+      .replace(/\r/g, '\\r')
+      .replace(/\n/g, '\\n') + '"'
+  );
+};
+
+app.post('/sanitize', (req, res) => {
+  try {
+    const rawString = req.body;
+
+    if (typeof rawString !== 'string' || !rawString.trim()) {
+      return res.status(400).json({ error: 'Expected non-empty string in body' });
+    }
+
+    const escaped = escapeForJsonStringValue(rawString);
+    return res.status(200).json({ escaped });
+  } catch (err) {
+    console.error('Error in /sanitize:', err);
+    return res.status(500).json({ error: 'Internal Server Error', details: err.message });
   }
 });
 
